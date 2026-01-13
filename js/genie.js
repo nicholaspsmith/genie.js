@@ -1,287 +1,334 @@
+// Genie Effect - Originally by Hakan Bilgin (c) 2013, Refactored 2024
+(function () {
+  "use strict";
 
-// Javascript by Hakan Bilgin (c) 2013
+  // Calculate element's absolute position and dimensions
+  function getElementBounds(el) {
+    const bounds = { w: el.offsetWidth, h: el.offsetHeight, t: 0, l: 0 };
 
-(function() {
+    while (el && el.nodeName !== "BODY") {
+      if (el === document.firstChild) return null;
+      bounds.t += el.offsetTop - el.scrollTop;
+      bounds.l += el.offsetLeft - el.scrollLeft;
+      el = el.offsetParent;
+    }
 
-'use strict';
+    return bounds;
+  }
 
-var $ = function(selector, context) {
-		// extreme slim version of jQuery
-		context = context || document;
-		return [].slice.call( context.querySelectorAll(selector) );
-	},
-	getDim = function(el, attr, val) {
-		attr = attr || 'nodeName';
-		val  = val || 'BODY';
-		var dim = {w: el.offsetWidth, h: el.offsetHeight, t: 0, l: 0, obj: el};
-		while (el && el[attr] != val && el.getAttribute(attr) != val) {
-			if (el == document.firstChild) return null;
-			dim.t += el.offsetTop - el.scrollTop;
-			dim.l += el.offsetLeft - el.scrollLeft;
-			//if (el.scrollWidth > el.offsetWidth) dim.w = el.offsetWidth;
-			el = el.offsetParent;
-		}
-		return dim;
-	},
-	prefixedEvent = function(el, type, callback) {
-		var pfx = 'webkit moz MS o '.split(' '),
-			p   = 0,
-			pl  = pfx.length;
-		for (; p<pl; p++) {
-			if (!pfx[p]) type = type.toLowerCase();
-			el.addEventListener(pfx[p] + type, callback, false);
-		}
-	},
+  // Add transition end listener with vendor prefixes
+  function onTransitionEnd(el, callback) {
+    const prefixes = ["webkit", "moz", "MS", "o", ""];
+    prefixes.forEach((prefix) => {
+      const eventName = prefix ? prefix + "TransitionEnd" : "transitionend";
+      el.addEventListener(eventName, callback, false);
+    });
+  }
 
-	genie = {
-		active: false,
-		// chrome animates faster than firefox & safari
-		step_height: window.chrome ? 3 : 5,
-		init: function() {
-			var thumbs = $('.dock img'),
-				gauge  = new Image(),
-				il     = thumbs.length,
-				i      = 0;
-			for (; i<il; i++) {
-				gauge.src = thumbs[i].src;
-				thumbs[i].setAttribute('data-src', gauge.src );
-				thumbs[i].setAttribute('data-width', gauge.width );
-				thumbs[i].setAttribute('data-height', gauge.height );
-				thumbs[i].style.backgroundImage = 'url('+ gauge.src +')';
-				thumbs[i].style.height = thumbs[i].height +'px';
-				thumbs[i].src = './img/_.gif';
-			}
-			genie.el = document.body.appendChild( document.createElement('div') );
-			document.addEventListener('click', genie.doEvent, false);
+  // Create a horizontal slice element
+  function createSlice(top, height, width, left, bgPosition) {
+    const div = document.createElement("div");
+    div.className = "genie-step";
+    div.style.top = top + "px";
+    div.style.height = height + "px";
+    div.style.width = width + "px";
+    div.style.left = left + "px";
+    div.style.backgroundPosition = bgPosition;
+    return div;
+  }
 
-			LS({id: 'genie_text'});
-		},
-		doEvent: function(event) {
-			switch(event.type) {
-				case 'transitionend':
-				case 'webkitTransitionEnd':
-					var source      = genie.el,
-						target      = source.thumbEl,
-						source_dim  = getDim(source),
-						target_dim  = getDim(target),
-						diffT       = target_dim.t + source_dim.t - 100,
-						step        = source.childNodes,
-						step_height = step[0].offsetHeight,
-						il          = step.length,
-						i           = 0;
+  // Calculate sine-wave distortion for genie curve
+  // startCounter: 4.75 for expand, 4.7 for collapse
+  function calculateSinPosition(index, stepCount, startCounter, multiplier, offset, subtract) {
+    const increase = Math.PI / stepCount;
+    const counter = startCounter + index * increase;
+    const value = Math.sin(counter) * multiplier;
+    return Math.ceil(subtract ? value - offset : value + offset);
+  }
 
-					switch (event.propertyName) {
-						case 'left':
-							if (source.classList.contains('collapse')) {
-								for (; i<il; i++) {
-									step[i].style.backgroundPosition = '0px '+ (diffT + i - (i * step_height)) +'px';
-								}
-								target.style.backgroundPosition = '0px 0px';
-								source.classList.add('change-pace');
-								source.style.height = '0px';
-							}
-							break;
-						case 'background-position':
-						case 'background-position-x':
-						case 'background-position-y':
-							if (source.classList.contains('expand')) {
-								for (; i<il; i++) {
-									step[i].style.left = '0px';
-									step[i].style.width = source_dim.w +'px';
-								}
-								source.classList.add('fan');
-							} else {
-								target.classList.remove('paced-thumb');
-								target.classList.add('genie-thumb');
-								source.classList.remove('change-pace');
-								source.classList.remove('collapse');
-								source.innerHTML = '';
-								
-								genie.collapsing = false;
-								genie.active = false;
+  // Remove all child nodes from an element
+  function clearChildren(el) {
+    while (el.firstChild) {
+      el.removeChild(el.firstChild);
+    }
+  }
 
-								if (genie.next) {
-									genie.expand( genie.next );
-									genie.next = false;
-								}
-							}
-							break;
-						case 'width':
-							if (source.classList.contains('fan')) {
-								source.style.backgroundPosition = '0px 0px';
-								setTimeout(function() {
-									source.classList.remove('fan');
-									source.classList.remove('expand');
-									source.innerHTML = '';
-								}, 0);
-								genie.active = target;
-								genie.processing = false;
-								genie.process_thumb = null;
-								//setTimeout(function() { genie.collapse(); }, 500);
-							}
-							break;
-					}
-					break;
-				case 'click':
-					if (event.target === genie.active) return;
-					if (genie.collapsing) return;
-					if (genie.processing && genie.process_thumb) {
-						clearTimeout(genie.timer);
-					}
-					if (event.target.classList.contains('genie-thumb')) {
-						genie.processing = true;
-						genie.process_thumb = event.target;
+  const genie = {
+    el: null,
+    active: false,
+    collapsing: false,
+    processing: false,
+    next: null,
+    timer: null,
+    stepHeight: 1,
 
-						if (genie.active) {
-							genie.next = event.target;
-							genie.collapse();
-							return;
-						}
-						genie.el.style.display = 'block';
-						genie.expand(event.target);
-					}
-					if (event.target.classList.contains('genie')) {
-						genie.collapse(event.target);
-					}
-					break;
-			}
-		},
-		collapse: function(etarget) {
-			genie.collapsing = true;
-			genie.processing = true;
-			genie.process_thumb = etarget;
-			var step_height = this.step_height,
-				source      = this.el,
-				source_dim  = getDim(source),
-				target      = source.thumbEl,
-				target_dim  = getDim(target),
-				step_length = Math.ceil((target_dim.t - source_dim.t) / step_height),
-				htm = '',
-				bg_pos,
-				top,
-				i = 0;
+    init() {
+      const thumbs = document.querySelectorAll(".dock img");
 
-			source.className = 'genie';
-			source.style.backgroundPosition = '0 -9999px';
+      thumbs.forEach((thumb) => {
+        const src = thumb.getAttribute("data-src") || thumb.src;
+        const width = thumb.getAttribute("data-width") || thumb.naturalWidth;
+        const height = thumb.getAttribute("data-height") || thumb.naturalHeight;
 
-			target.classList.remove('genie-thumb');
-			target.classList.add('paced-thumb');
+        thumb.setAttribute("data-src", src);
+        thumb.setAttribute("data-width", width);
+        thumb.setAttribute("data-height", height);
+        thumb.style.backgroundImage = "url(" + src + ")";
+        thumb.style.height = thumb.height + "px";
+        thumb.src =
+          "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+      });
 
-			for (; i<step_length; i++) {
-				top    = i * step_height;
-				bg_pos = '0px '+ (((top + step_height) / source_dim.h) * 100 ) + '%';
-				htm   += '<div class="genie-step" style="left: 0px; top: '+ top +'px; width: '+ source_dim.w +
-							'px; height: '+ (step_height + 1) +'px; background-position: '+ bg_pos + ';"></div>';
-			}
-			source.innerHTML = htm;
-			source.classList.add('collapse');
+      this.el = document.body.appendChild(document.createElement("div"));
+      document.addEventListener("click", this.handleEvent.bind(this), false);
 
-			genie.timer = setTimeout(function() {
-				var steps         = source.childNodes,
-					radians_left  = Math.floor((target_dim.l - source_dim.l) / 2),
-					radians_width = Math.floor((target_dim.w - source_dim.w) / 2),
-					rw_offset     = radians_width - target_dim.w,
-					increase      = (Math.PI * 2) / (step_length * 2),
-					counter       = 4.7,
-					i             = 0,
-					il            = steps.length;
-				for (; i<il; i++) {
-					steps[i].style.left  = Math.ceil((Math.sin(counter) * radians_left) + radians_left) +'px';
-					steps[i].style.width = Math.ceil((Math.sin(counter) * radians_width) - rw_offset) +'px';
-					counter             += increase;
-				}
-				prefixedEvent(steps[il-1], 'transitionend', genie.doEvent);
-			}, 100);
-		},
-		setupTarget: function(img, source_dim) {
-			var target        = this.el,
-				margin        = 100,
-				dEl           = document.documentElement,
-				dBody         = document.body,
-				window_width  = Math.max(dEl.clientWidth, dBody.scrollWidth, dEl.scrollWidth, dBody.offsetWidth, dEl.offsetWidth) - (margin * 2),
-				window_height = source_dim.t - (margin * 2),
-				gauge_src     = img.getAttribute('data-src'),
-				gauge_width   = +img.getAttribute('data-width'),
-				gauge_height  = +img.getAttribute('data-height'),
-				gauge_ratio,
-				target_width,
-				target_height;
+      // Initialize text animation if LS exists
+      if (typeof LS !== "undefined") {
+        LS({ id: "genie_text" });
+      }
+    },
 
-			gauge_ratio   = gauge_width / gauge_height;
-			target_width  = window_width;
-			target_height = window_width / gauge_ratio;
+    handleEvent(event) {
+      if (event.type === "click") {
+        this.handleClick(event);
+      } else if (
+        event.type === "transitionend" ||
+        event.type === "webkitTransitionEnd"
+      ) {
+        this.handleTransitionEnd(event);
+      }
+    },
 
-			if (target_height > window_height) {
-				target_height = window_height;
-				target_width  = window_height * gauge_ratio;
-			}
+    handleClick(event) {
+      const target = event.target;
 
-			target.style.display            = 'block';
-			target.style.width              = target_width +'px';
-			target.style.height             = target_height +'px';
-			target.style.top                = (margin * 1.2) +'px';
-			target.style.left               = (margin + Math.floor((window_width - target_width) / 2)) +'px';
-			target.style.backgroundPosition = '0px -9999px';
-			target.style.backgroundImage    = 'url('+ gauge_src +')';
-			target.className                = 'genie';
-			target.thumbEl                  = img;
+      if (target === this.active) return;
+      if (this.collapsing) return;
 
-			return getDim(target);
-		},
-		expand: function(source) {
-			var step_height   = this.step_height,
-				target        = this.el,
-				source_dim    = getDim(source),
-				target_dim    = this.setupTarget(source, source_dim),
-				diffT         = source_dim.t - target_dim.t,
-				radians_left  = Math.floor((source_dim.l - target_dim.l) / 2),
-				radians_width = Math.floor((source_dim.w - target_dim.w) / 2),
-				rw_offset     = radians_width - source_dim.w,
-				step_length   = Math.ceil((source_dim.t - target_dim.t) / step_height),
-				increase      = (Math.PI * 2) / (step_length * 2),
-				counter       = 4.75,
-				htm           = '',
-				i             = 0,
-				bgy;
+      if (this.processing) {
+        clearTimeout(this.timer);
+      }
 
-			for (; i<step_length; i++) {
-				bgy = (diffT - (i * step_height));
-				htm += '<div class="genie-step" style="top: '+ (i * step_height) +
-						'px; height: '+ (step_height + 1) +'px; background-position: 0px '+ bgy +
-						'px; left: '+ Math.ceil((Math.sin(counter) * radians_left) + radians_left) +
-						'px; width: '+ Math.ceil((Math.sin(counter) * radians_width) - rw_offset) +'px;"></div>';
-				counter += increase;
-			}
-			target.innerHTML = htm;
+      if (target.classList.contains("genie-thumb")) {
+        this.processing = true;
 
-			// single listener
-			prefixedEvent(target.childNodes[step_length-1], 'TransitionEnd', genie.doEvent);
+        if (this.active) {
+          this.next = target;
+          this.collapse();
+          return;
+        }
 
-			setTimeout(function() {
-				var steps    = target.childNodes,
-					s_dim    = source_dim,
-					t_dim    = target_dim,
-					s_height = step_height,
-					il       = steps.length,
-					i        = 0,
-					step_top,
-					bgy,
-					t,
-					o;
-				for (; i<il; i++) {
-					t = i * s_height;
-					o = t - t_dim.h;
-					bgy = ((t - 2) / (t_dim.h - s_height)) * 100;
-					steps[i].style.backgroundPosition = '0% '+ bgy + '%';
-				}
-				source.style.backgroundPosition = '0 -'+ (s_dim.h + 10) +'px';
-				//source.style.backgroundPosition = '0 -'+ (s_dim.t - t_dim.t - t_dim.h) +'px';
-				target.className += ' expand';
-			}, 100);
-		}
-	};
+        this.el.style.display = "block";
+        this.expand(target);
+      }
 
-window.onload = genie.init;
+      if (target.classList.contains("genie")) {
+        this.collapse();
+      }
+    },
 
-}());
+    handleTransitionEnd(event) {
+      const source = this.el;
+      const thumb = source.thumbEl;
+      const sourceBounds = getElementBounds(source);
+      const thumbBounds = getElementBounds(thumb);
+      const steps = Array.from(source.childNodes);
 
+      switch (event.propertyName) {
+        case "left":
+          if (source.classList.contains("collapse")) {
+            const diffT = thumbBounds.t + sourceBounds.t - 100;
+            const stepH = steps[0] ? steps[0].offsetHeight : this.stepHeight;
+
+            steps.forEach((step, i) => {
+              step.style.backgroundPosition = "0px " + (diffT + i - i * stepH) + "px";
+            });
+
+            thumb.style.backgroundPosition = "0px 0px";
+            source.classList.add("change-pace");
+            source.style.height = "0px";
+          }
+          break;
+
+        case "background-position":
+        case "background-position-x":
+        case "background-position-y":
+          if (source.classList.contains("expand")) {
+            steps.forEach((step) => {
+              step.style.left = "0px";
+              step.style.width = sourceBounds.w + "px";
+            });
+            source.classList.add("fan");
+          } else {
+            thumb.classList.remove("paced-thumb");
+            thumb.classList.add("genie-thumb");
+            source.classList.remove("change-pace");
+            source.classList.remove("collapse");
+            clearChildren(source);
+
+            this.collapsing = false;
+            this.active = false;
+
+            if (this.next) {
+              this.expand(this.next);
+              this.next = null;
+            }
+          }
+          break;
+
+        case "width":
+          if (source.classList.contains("fan")) {
+            source.style.backgroundPosition = "0px 0px";
+            setTimeout(function () {
+              source.classList.remove("fan");
+              source.classList.remove("expand");
+              clearChildren(source);
+            }, 0);
+            this.active = thumb;
+            this.processing = false;
+          }
+          break;
+      }
+    },
+
+    setupTarget(thumb, thumbBounds) {
+      const margin = 100;
+      const viewportWidth =
+        Math.max(
+          document.documentElement.clientWidth,
+          document.body.scrollWidth,
+          document.documentElement.scrollWidth,
+          document.body.offsetWidth,
+          document.documentElement.offsetWidth
+        ) - margin * 2;
+      const viewportHeight = thumbBounds.t - margin * 2;
+
+      const imgWidth = +thumb.getAttribute("data-width");
+      const imgHeight = +thumb.getAttribute("data-height");
+      const aspectRatio = imgWidth / imgHeight;
+
+      var targetWidth = viewportWidth;
+      var targetHeight = viewportWidth / aspectRatio;
+
+      if (targetHeight > viewportHeight) {
+        targetHeight = viewportHeight;
+        targetWidth = viewportHeight * aspectRatio;
+      }
+
+      const target = this.el;
+      target.style.display = "block";
+      target.style.width = targetWidth + "px";
+      target.style.height = targetHeight + "px";
+      target.style.top = margin * 1.2 + "px";
+      target.style.left = margin + Math.floor((viewportWidth - targetWidth) / 2) + "px";
+      target.style.backgroundPosition = "0px -9999px";
+      target.style.backgroundImage = "url(" + thumb.getAttribute("data-src") + ")";
+      target.className = "genie";
+      target.thumbEl = thumb;
+
+      return getElementBounds(target);
+    },
+
+    expand(thumb) {
+      const thumbBounds = getElementBounds(thumb);
+      const targetBounds = this.setupTarget(thumb, thumbBounds);
+      const stepCount = Math.ceil((thumbBounds.t - targetBounds.t) / this.stepHeight);
+      const diffT = thumbBounds.t - targetBounds.t;
+      const radiansLeft = Math.floor((thumbBounds.l - targetBounds.l) / 2);
+      const radiansWidth = Math.floor((thumbBounds.w - targetBounds.w) / 2);
+      const rwOffset = radiansWidth - thumbBounds.w;
+
+      // Create slices with initial curved positions
+      const fragment = document.createDocumentFragment();
+
+      for (var i = 0; i < stepCount; i++) {
+        const top = i * this.stepHeight;
+        const left = calculateSinPosition(i, stepCount, 4.75, radiansLeft, radiansLeft, false);
+        const width = calculateSinPosition(i, stepCount, 4.75, radiansWidth, rwOffset, true);
+        const bgY = diffT - top;
+
+        fragment.appendChild(
+          createSlice(top, this.stepHeight + 1, width, left, "0px " + bgY + "px")
+        );
+      }
+
+      clearChildren(this.el);
+      this.el.appendChild(fragment);
+
+      const lastSlice = this.el.lastChild;
+      if (lastSlice) {
+        onTransitionEnd(lastSlice, this.handleEvent.bind(this));
+      }
+
+      // Trigger animation after brief delay
+      const self = this;
+      setTimeout(function () {
+        const steps = self.el.childNodes;
+
+        for (var j = 0; j < steps.length; j++) {
+          const bgY = ((j * self.stepHeight - 2) / (targetBounds.h - self.stepHeight)) * 100;
+          steps[j].style.backgroundPosition = "0% " + bgY + "%";
+        }
+
+        thumb.style.backgroundPosition = "0 -" + (thumbBounds.h + 10) + "px";
+        self.el.classList.add("expand");
+      }, 100);
+    },
+
+    collapse() {
+      this.collapsing = true;
+      this.processing = true;
+
+      const source = this.el;
+      const sourceBounds = getElementBounds(source);
+      const thumb = source.thumbEl;
+      const thumbBounds = getElementBounds(thumb);
+      const stepCount = Math.ceil((thumbBounds.t - sourceBounds.t) / this.stepHeight);
+
+      source.className = "genie";
+      source.style.backgroundPosition = "0 -9999px";
+
+      thumb.classList.remove("genie-thumb");
+      thumb.classList.add("paced-thumb");
+
+      // Create slices at current (expanded) positions
+      const fragment = document.createDocumentFragment();
+
+      for (var i = 0; i < stepCount; i++) {
+        const top = i * this.stepHeight;
+        const bgY = ((top + this.stepHeight) / sourceBounds.h) * 100 + "%";
+
+        fragment.appendChild(
+          createSlice(top, this.stepHeight + 1, sourceBounds.w, 0, "0px " + bgY)
+        );
+      }
+
+      clearChildren(source);
+      source.appendChild(fragment);
+      source.classList.add("collapse");
+
+      // Animate to curved positions
+      const self = this;
+      this.timer = setTimeout(function () {
+        const steps = Array.from(source.childNodes);
+        const radiansLeft = Math.floor((thumbBounds.l - sourceBounds.l) / 2);
+        const radiansWidth = Math.floor((thumbBounds.w - sourceBounds.w) / 2);
+        const rwOffset = radiansWidth - thumbBounds.w;
+
+        steps.forEach(function (step, i) {
+          step.style.left = calculateSinPosition(i, stepCount, 4.7, radiansLeft, radiansLeft, false) + "px";
+          step.style.width = calculateSinPosition(i, stepCount, 4.7, radiansWidth, rwOffset, true) + "px";
+        });
+
+        const lastSlice = steps[steps.length - 1];
+        if (lastSlice) {
+          onTransitionEnd(lastSlice, self.handleEvent.bind(self));
+        }
+      }, 100);
+    },
+  };
+
+  window.onload = function () {
+    genie.init();
+  };
+})();
